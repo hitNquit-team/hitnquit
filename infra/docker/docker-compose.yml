@@ -22,8 +22,8 @@ services:
 
   web:
     build:
-      context: .
-      dockerfile: Dockerfile
+      context: ../..
+      dockerfile: infra/docker/Dockerfile
     container_name: fastapi_app
     restart: unless-stopped
     ports:
@@ -33,7 +33,7 @@ services:
       - EMBEDDING_MODEL_PATH=${EMBEDDING_MODEL_PATH}
       - LOG_LEVEL=${LOG_LEVEL}
     volumes:
-      - ./app:/app/app # Маунтимо код для гарячого перезавантаження (hot-reload)
+      - ../../backend/app:/app/app
     depends_on:
       db:
         condition: service_healthy
