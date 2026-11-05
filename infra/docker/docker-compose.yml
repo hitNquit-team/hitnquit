@@ -30,6 +30,7 @@ services:
       - DATABASE_URL=${DATABASE_URL}
       - EMBEDDING_MODEL_PATH=${EMBEDDING_MODEL_PATH}
       - LOG_LEVEL=${LOG_LEVEL}
+      - SEED_TENANT_NAME=${SEED_TENANT_NAME}
     volumes:
       - ../../backend/app:/app/app
     depends_on:
