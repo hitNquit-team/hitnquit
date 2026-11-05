@@ -30,6 +30,13 @@ class Employee(Base):
     status: Mapped[str] = mapped_column(Text, nullable=False)
     hire_date: Mapped[Optional[date]] = mapped_column(Date)
     exit_date: Mapped[Optional[date]] = mapped_column(Date)
+    source_dataset: Mapped[str] = mapped_column(Text, nullable=False)
+    source_record_id: Mapped[str] = mapped_column(Text, nullable=False)
+    job_title: Mapped[Optional[str]] = mapped_column(Text)
+    overtime: Mapped[Optional[bool]] = mapped_column()
+    monthly_income: Mapped[Optional[float]] = mapped_column(Numeric)
+    work_life_balance: Mapped[Optional[int]] = mapped_column()
+    tenure_months: Mapped[Optional[int]] = mapped_column()
 
     # Зв'язки
     tenant: Mapped["Tenant"] = relationship(back_populates="employees")
@@ -47,12 +54,14 @@ class Resume(Base):
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     employee_id: Mapped[uuid.UUID] = mapped_column(ForeignKey('employees.id'), nullable=False)
     parsed_skills: Mapped[Optional[dict]] = mapped_column(JSONB)
+    profile_text: Mapped[Optional[str]] = mapped_column(Text)
     
     # Розмірність 384 відповідає моделі all-MiniLM-L6-v2 з ваших налаштувань
     embedding: Mapped[Optional[Any]] = mapped_column(Vector(384))
     
     source_uri: Mapped[Optional[str]] = mapped_column(Text)
     parser_version: Mapped[Optional[str]] = mapped_column(Text)
+    embedding_model: Mapped[Optional[str]] = mapped_column(Text)
 
     # Зв'язки
     employee: Mapped["Employee"] = relationship(back_populates="resumes")
@@ -64,8 +73,10 @@ class ExitFeedback(Base):
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     employee_id: Mapped[uuid.UUID] = mapped_column(ForeignKey('employees.id'), nullable=False)
-    exit_reason: Mapped[str] = mapped_column(Text, nullable=False)
+    exit_reason: Mapped[Optional[str]] = mapped_column(Text)
     details: Mapped[Optional[dict]] = mapped_column(JSONB)
+    source_dataset: Mapped[str] = mapped_column(Text, nullable=False)
+    source_record_id: Mapped[str] = mapped_column(Text, nullable=False)
     submitted_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
     # Зв'язки
