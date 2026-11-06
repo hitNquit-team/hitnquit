@@ -56,8 +56,10 @@ docker compose --profile seed run --rm seed
 Команда `docker compose run --rm seed` показує логи імпорту безпосередньо
 в поточному терміналі та не перезапускає FastAPI.
 
-`SEED_TENANT_NAME` використовується тільки `seed`; `EMBEDDING_MODEL_PATH`
-потрібен `seed` для генерації embeddings.
+`SEED_TENANT_NAME` використовується тільки `seed`. Для генерації embeddings
+`seed` отримує пару `EMBEDDING_MODEL_PATH` і `EMBEDDING_MODEL_REVISION`; якщо
+модель змінюється, revision потрібно змінити на сумісний commit тієї самої
+моделі.
 
 ## Міграції та pgvector
 

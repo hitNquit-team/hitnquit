@@ -47,6 +47,11 @@ contains counts plus non-sensitive `skip_reasons`, `rejection_reasons`, and
 `employee_not_found`, `missing_attrition`, and `invalid_attrition`); rejected
 rows are logged with dataset and row number, never with row contents.
 
-The embedding model is pinned to revision
-`1110a243fdf4706b3f48f1d95db1a4f5529b4d41`, produces normalized 384-dimensional
-vectors, and stores both its name and revision in `resumes.embedding_model`.
+On subsequent runs, existing resume IDs are checked before loading the embedding
+model, so embeddings are generated only for new employee rows.
+
+The embedding model and its revision are configured through
+`EMBEDDING_MODEL_PATH` and `EMBEDDING_MODEL_REVISION`. The default revision is
+`1110a243fdf4706b3f48f1d95db1a4f5529b4d41`; the configured model must produce
+384-dimensional normalized vectors, and both its name and revision are stored
+in `resumes.embedding_model`.

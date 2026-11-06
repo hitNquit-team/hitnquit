@@ -32,7 +32,10 @@ EMBEDDING_MODEL = os.getenv(
     "EMBEDDING_MODEL_PATH",
     "sentence-transformers/all-MiniLM-L6-v2",
 )
-EMBEDDING_MODEL_REVISION = "1110a243fdf4706b3f48f1d95db1a4f5529b4d41"
+EMBEDDING_MODEL_REVISION = os.getenv(
+    "EMBEDDING_MODEL_REVISION",
+    "1110a243fdf4706b3f48f1d95db1a4f5529b4d41",
+)
 EMBEDDING_DIMENSION = 384
 NAMESPACE = uuid.UUID("c1a8e7af-7dd2-4c8b-a5e8-92e66c236965")
 
@@ -257,34 +260,62 @@ def _stable_uuid(kind: str, tenant_id: uuid.UUID, dataset: str, record_id: str) 
 
 
 def _load_file(session: Session, tenant: Tenant, path: Path, embedder: Any,
-               summary: ImportSummary) -> None:
+               summary: ImportSummary) -> Any:
     dataset = path.name
     try:
         frame = _read(path)
     except ValueError as exc:
         summary.rejected_for(str(exc))
         LOGGER.warning("Rejected dataset %s: %s", dataset, exc)
-        return
+        return embedder
     is_survey = path.suffix.lower() == ".xlsx"
     if is_survey:
         _load_survey(session, tenant, dataset, frame, summary)
-        return
-    vectors = embedder.encode(
-        [_profile(row)[0] for _, row in frame.iterrows()],
-        normalize_embeddings=True,
-        show_progress_bar=False,
-    ) if len(frame) else []
+        return embedder
+
+    pending: list[tuple[int, pd.Series, str, str, dict[str, Any], uuid.UUID, uuid.UUID]] = []
     for index, (_, row) in enumerate(frame.iterrows()):
         record_id = _source_id(row)
         try:
             profile_text, normalized = _profile(row)
             employee_id = _stable_uuid("employee", tenant.id, dataset, record_id)
+            resume_id = _stable_uuid("resume", tenant.id, dataset, record_id)
+            pending.append(
+                (index, row, record_id, profile_text, normalized, employee_id, resume_id)
+            )
+        except (TypeError, ValueError, KeyError) as exc:
+            summary.rejected_for("invalid_row")
+            LOGGER.warning("Rejected source row %s/%s: %s", dataset, index + 1, exc)
+
+    existing_resume_ids = set(
+        session.scalars(
+            select(Resume.id).where(
+                Resume.id.in_([item[6] for item in pending])
+            )
+        ).all()
+    ) if pending else set()
+    new_rows = []
+    for item in pending:
+        if item[6] in existing_resume_ids:
+            summary.skipped_for("already_imported")
+        else:
+            new_rows.append(item)
+
+    if not new_rows:
+        session.commit()
+        return embedder
+
+    if embedder is None:
+        embedder = _embedder()
+    vectors = embedder.encode(
+        [item[3] for item in new_rows],
+        normalize_embeddings=True,
+        show_progress_bar=False,
+    )
+    for vector, item in zip(vectors, new_rows):
+        _, row, record_id, profile_text, normalized, employee_id, resume_id = item
+        try:
             employee = session.get(Employee, employee_id)
-            if employee is not None and session.get(
-                Resume, _stable_uuid("resume", tenant.id, dataset, record_id)
-            ) is not None:
-                summary.skipped_for("already_imported")
-                continue
             status = _employment_status(row, summary)
             if employee is None:
                 employee = Employee(
@@ -306,7 +337,6 @@ def _load_file(session: Session, tenant: Tenant, path: Path, embedder: Any,
             employee.hire_date = _date(_column(row, "hire_date"))
             employee.exit_date = _date(_column(row, "exit_date"))
 
-            resume_id = _stable_uuid("resume", tenant.id, dataset, record_id)
             resume = session.get(Resume, resume_id)
             if resume is None:
                 resume = Resume(id=resume_id, employee_id=employee_id)
@@ -314,7 +344,7 @@ def _load_file(session: Session, tenant: Tenant, path: Path, embedder: Any,
             resume.employee_id = employee_id
             resume.profile_text = profile_text
             resume.parsed_skills = normalized
-            resume.embedding = vectors[index].tolist()
+            resume.embedding = vector.tolist()
             resume.source_uri = str(path.resolve())
             resume.parser_version = "hr-seed-v1"
             resume.embedding_model = f"{EMBEDDING_MODEL}@{EMBEDDING_MODEL_REVISION}"
@@ -338,8 +368,9 @@ def _load_file(session: Session, tenant: Tenant, path: Path, embedder: Any,
             summary.imported += 1
         except (TypeError, ValueError, KeyError) as exc:
             summary.rejected_for("invalid_row")
-            LOGGER.warning("Rejected source row %s/%s: %s", dataset, index + 1, exc)
+            LOGGER.warning("Rejected source row %s/%s: %s", dataset, item[0] + 1, exc)
     session.commit()
+    return embedder
 
 
 def _load_survey(session: Session, tenant: Tenant, dataset: str,
@@ -411,9 +442,9 @@ def main() -> int:
             tenant = Tenant(name=args.tenant_name)
             session.add(tenant)
             session.flush()
-        embedder = _embedder()
+        embedder = None
         for path in paths:
-            _load_file(session, tenant, path, embedder, summary)
+            embedder = _load_file(session, tenant, path, embedder, summary)
     print(json.dumps(summary.report(), ensure_ascii=True))
     return 0
 
