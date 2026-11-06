@@ -28,7 +28,10 @@ if __package__ in {None, ""}:
 from app.db.models import Employee, ExitFeedback, Resume, Tenant
 
 LOGGER = logging.getLogger("seed_db")
-EMBEDDING_MODEL = "sentence-transformers/all-MiniLM-L6-v2"
+EMBEDDING_MODEL = os.getenv(
+    "EMBEDDING_MODEL_PATH",
+    "sentence-transformers/all-MiniLM-L6-v2",
+)
 EMBEDDING_DIMENSION = 384
 NAMESPACE = uuid.UUID("c1a8e7af-7dd2-4c8b-a5e8-92e66c236965")
 
