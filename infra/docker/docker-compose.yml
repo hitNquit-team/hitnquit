@@ -1,4 +1,4 @@
-version: '3.8'
+﻿version: '3.8'
 
 services:
   db:
@@ -33,7 +33,7 @@ services:
       - EMBEDDING_MODEL_PATH=${EMBEDDING_MODEL_PATH}
       - LOG_LEVEL=${LOG_LEVEL}
     volumes:
-      - ./app:/app/app # Маунтимо код для гарячого перезавантаження (hot-reload)
+      - ../../app:/app/app
     depends_on:
       db:
         condition: service_healthy
