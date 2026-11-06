@@ -32,11 +32,16 @@ EMBEDDING_MODEL = os.getenv(
     "EMBEDDING_MODEL_PATH",
     "sentence-transformers/all-MiniLM-L6-v2",
 )
+EMBEDDING_MODEL_REVISION = "1110a243fdf4706b3f48f1d95db1a4f5529b4d41"
 EMBEDDING_DIMENSION = 384
 NAMESPACE = uuid.UUID("c1a8e7af-7dd2-4c8b-a5e8-92e66c236965")
 
 ALIASES: dict[str, tuple[str, ...]] = {
-    "record_id": ("EmployeeNumber", "employee_id", "Employee ID", "id", "ID"),
+    "record_id": ("EmployeeNumber", "employee_id", "Employee ID", "Response ID", "id", "ID"),
+    "survey_employee_key": (
+        "EmployeeNumber", "employee_id", "Employee ID", "Employee Number",
+        "employee_number", "HRIS ID", "worker_id", "Worker ID", "person_id",
+    ),
     "job_title": ("JobRole", "job_title", "Job Title", "position", "Position", "Business_Title"),
     "overtime": ("OverTime", "overtime", "Overtime", "haveOT"),
     "monthly_income": ("MonthlyIncome", "monthly_income", "Monthly Income"),
@@ -57,12 +62,37 @@ class ImportSummary:
     imported: int = 0
     skipped: int = 0
     rejected: int = 0
+    skip_reasons: dict[str, int] | None = None
+    rejection_reasons: dict[str, int] | None = None
+    normalization_reasons: dict[str, int] | None = None
 
-    def report(self) -> dict[str, int]:
+    def __post_init__(self) -> None:
+        self.skip_reasons = {}
+        self.rejection_reasons = {}
+        self.normalization_reasons = {}
+
+    def skipped_for(self, reason: str) -> None:
+        self.skipped += 1
+        assert self.skip_reasons is not None
+        self.skip_reasons[reason] = self.skip_reasons.get(reason, 0) + 1
+
+    def rejected_for(self, reason: str) -> None:
+        self.rejected += 1
+        assert self.rejection_reasons is not None
+        self.rejection_reasons[reason] = self.rejection_reasons.get(reason, 0) + 1
+
+    def noted(self, reason: str) -> None:
+        assert self.normalization_reasons is not None
+        self.normalization_reasons[reason] = self.normalization_reasons.get(reason, 0) + 1
+
+    def report(self) -> dict[str, Any]:
         return {
             "imported": self.imported,
             "skipped": self.skipped,
             "rejected": self.rejected,
+            "skip_reasons": self.skip_reasons,
+            "rejection_reasons": self.rejection_reasons,
+            "normalization_reasons": self.normalization_reasons,
         }
 
 
@@ -137,9 +167,20 @@ def _source_id(row: pd.Series) -> str:
 def _read(path: Path) -> pd.DataFrame:
     if path.suffix.lower() == ".xlsx":
         sheets = pd.read_excel(path, sheet_name=None)
-        if not sheets:
-            return pd.DataFrame()
-        return pd.concat(sheets.values(), ignore_index=True)
+        normalized_names = {
+            re.sub(r"[^a-z0-9]", "", name.lower()): name for name in sheets
+        }
+        sheet_name = next(
+            (
+                normalized_names[name]
+                for name in ("hrsurveyresponses", "hrsurveyreponses")
+                if name in normalized_names
+            ),
+            None,
+        )
+        if sheet_name is None:
+            raise ValueError("survey_sheet_not_found")
+        return sheets[sheet_name]
     return pd.read_csv(path)
 
 
@@ -169,6 +210,35 @@ def _profile(row: pd.Series) -> tuple[str, dict[str, Any]]:
     return "; ".join(parts), normalized
 
 
+def _employment_status(row: pd.Series, summary: ImportSummary) -> str:
+    raw = _clean(_column(row, "attrition"))
+    value = _boolean(raw)
+    if raw is None:
+        summary.noted("missing_attrition")
+    elif value is None:
+        summary.noted("invalid_attrition")
+    return "exited" if value is True else "active" if value is False else "unknown"
+
+
+def _normalized_key(value: Any) -> str | None:
+    value = _clean(value)
+    return None if value is None else str(value).strip().lower()
+
+
+def _find_employee(session: Session, tenant: Tenant, key: Any) -> Employee | None:
+    normalized_key = _normalized_key(key)
+    if normalized_key is None:
+        return None
+    employees = session.scalars(
+        select(Employee).where(Employee.tenant_id == tenant.id)
+    ).all()
+    matches = [
+        employee for employee in employees
+        if _normalized_key(employee.source_record_id) == normalized_key
+    ]
+    return matches[0] if len(matches) == 1 else None
+
+
 def _embedder() -> Any:
     try:
         from sentence_transformers import SentenceTransformer
@@ -176,7 +246,7 @@ def _embedder() -> Any:
         raise RuntimeError(
             "sentence-transformers is required; install backend dependencies first"
         ) from exc
-    model = SentenceTransformer(EMBEDDING_MODEL)
+    model = SentenceTransformer(EMBEDDING_MODEL, revision=EMBEDDING_MODEL_REVISION)
     if model.get_sentence_embedding_dimension() != EMBEDDING_DIMENSION:
         raise RuntimeError("Embedding dimension does not match resumes.embedding (384)")
     return model
@@ -189,7 +259,16 @@ def _stable_uuid(kind: str, tenant_id: uuid.UUID, dataset: str, record_id: str) 
 def _load_file(session: Session, tenant: Tenant, path: Path, embedder: Any,
                summary: ImportSummary) -> None:
     dataset = path.name
-    frame = _read(path)
+    try:
+        frame = _read(path)
+    except ValueError as exc:
+        summary.rejected_for(str(exc))
+        LOGGER.warning("Rejected dataset %s: %s", dataset, exc)
+        return
+    is_survey = path.suffix.lower() == ".xlsx"
+    if is_survey:
+        _load_survey(session, tenant, dataset, frame, summary)
+        return
     vectors = embedder.encode(
         [_profile(row)[0] for _, row in frame.iterrows()],
         normalize_embeddings=True,
@@ -204,18 +283,19 @@ def _load_file(session: Session, tenant: Tenant, path: Path, embedder: Any,
             if employee is not None and session.get(
                 Resume, _stable_uuid("resume", tenant.id, dataset, record_id)
             ) is not None:
-                summary.skipped += 1
+                summary.skipped_for("already_imported")
                 continue
+            status = _employment_status(row, summary)
             if employee is None:
                 employee = Employee(
                     id=employee_id,
                     tenant_id=tenant.id,
                     source_dataset=dataset,
                     source_record_id=record_id,
-                    status="exited" if _boolean(_column(row, "attrition")) else "active",
+                    status=status,
                 )
                 session.add(employee)
-            employee.status = "exited" if _boolean(_column(row, "attrition")) else "active"
+            employee.status = status
             employee.source_dataset = dataset
             employee.source_record_id = record_id
             employee.job_title = normalized["job_title"]
@@ -237,11 +317,10 @@ def _load_file(session: Session, tenant: Tenant, path: Path, embedder: Any,
             resume.embedding = vectors[index].tolist()
             resume.source_uri = str(path.resolve())
             resume.parser_version = "hr-seed-v1"
-            resume.embedding_model = EMBEDDING_MODEL
+            resume.embedding_model = f"{EMBEDDING_MODEL}@{EMBEDDING_MODEL_REVISION}"
 
             reason = _text(_column(row, "exit_reason"))
-            is_survey = path.suffix.lower() == ".xlsx"
-            if is_survey or reason is not None or _column(row, "survey_date") is not None:
+            if reason is not None or _column(row, "survey_date") is not None:
                 feedback_id = _stable_uuid("feedback", tenant.id, dataset, record_id)
                 feedback = session.get(ExitFeedback, feedback_id)
                 if feedback is None:
@@ -258,8 +337,44 @@ def _load_file(session: Session, tenant: Tenant, path: Path, embedder: Any,
                 }
             summary.imported += 1
         except (TypeError, ValueError, KeyError) as exc:
-            summary.rejected += 1
+            summary.rejected_for("invalid_row")
             LOGGER.warning("Rejected source row %s/%s: %s", dataset, index + 1, exc)
+    session.commit()
+
+
+def _load_survey(session: Session, tenant: Tenant, dataset: str,
+                 frame: pd.DataFrame, summary: ImportSummary) -> None:
+    for index, (_, row) in enumerate(frame.iterrows()):
+        response_id = _source_id(row)
+        employee_key = _column(row, "survey_employee_key")
+        if employee_key is None:
+            summary.rejected_for("missing_employee_key")
+            LOGGER.warning("Rejected survey row %s/%s: missing employee key", dataset, index + 1)
+            continue
+        employee = _find_employee(session, tenant, employee_key)
+        if employee is None:
+            summary.rejected_for("employee_not_found")
+            LOGGER.warning("Rejected survey row %s/%s: employee key not found", dataset, index + 1)
+            continue
+        feedback_id = _stable_uuid("feedback", tenant.id, dataset, response_id)
+        if session.get(ExitFeedback, feedback_id) is not None:
+            summary.skipped_for("already_imported")
+            continue
+        reason = _text(_column(row, "exit_reason"))
+        survey_date = _date(_column(row, "survey_date"))
+        feedback = ExitFeedback(
+            id=feedback_id,
+            employee_id=employee.id,
+            exit_reason=reason,
+            source_dataset=dataset,
+            source_record_id=response_id,
+            details={
+                "survey_date": survey_date.isoformat() if survey_date else None,
+                "reason_missing": reason is None,
+            },
+        )
+        session.add(feedback)
+        summary.imported += 1
     session.commit()
 
 

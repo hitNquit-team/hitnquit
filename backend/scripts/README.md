@@ -14,8 +14,14 @@ python -m scripts.seed_db --data-dir D:\data\hr --tenant-name "Example organisat
 - `sample_hris_anonymized.csv`
 - `HR Employee Survey Responses_Dataset.xlsx`
 
-The importer reads every worksheet in the workbook. The source-to-database
-mapping is implemented in `scripts/seed_db.py` and accepts the IBM names
+Only the `HR Survey Reponses` or `HR Survey Responses` worksheet is imported;
+the workbook's `Data Dictionary` and other worksheets are ignored. Survey
+rows are feedback-only and must contain an employee key (`EmployeeNumber`,
+`employee_id`, `Employee ID`, or another documented HRIS key) matching an
+employee already imported from IBM HR or HRIS. `Response ID` identifies the
+feedback response and is never treated as an employee key. Rows without a
+matching employee are rejected and counted. The source-to-database mapping is
+implemented in `scripts/seed_db.py` and accepts the IBM names
 (`JobRole`, `OverTime`, `MonthlyIncome`, `WorkLifeBalance`, `YearsAtCompany`,
 `Attrition`) plus snake-case and common HRIS alternatives.
 
@@ -36,5 +42,11 @@ Normalization rules:
 Each row receives a deterministic key from `(tenant, file name, source ID)`.
 If a source has no ID, a SHA-256 hash of the row is used. A second run reports
 those rows as `skipped` and does not create duplicates. The final JSON summary
-contains only counts (`imported`, `skipped`, `rejected`); rejected rows are
-logged with dataset and row number, never with row contents.
+contains counts plus non-sensitive `skip_reasons`, `rejection_reasons`, and
+`normalization_reasons` (including `already_imported`, `missing_employee_key`,
+`employee_not_found`, `missing_attrition`, and `invalid_attrition`); rejected
+rows are logged with dataset and row number, never with row contents.
+
+The embedding model is pinned to revision
+`1110a243fdf4706b3f48f1d95db1a4f5529b4d41`, produces normalized 384-dimensional
+vectors, and stores both its name and revision in `resumes.embedding_model`.
