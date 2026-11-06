@@ -1,15 +1,16 @@
 import os
+
 from dotenv import load_dotenv
 from alembic import context
-from sqlalchemy import engine_from_config, pool
+from sqlalchemy import engine_from_config, pool, text
 
 # Завантажуємо змінні середовища
 load_dotenv()
 
 config = context.config
 
-# Отримуємо DATABASE_URL з .env (за замовчуванням для локального запуску)
-database_url = os.getenv("DATABASE_URL", "******localhost:5432/app_db")
+# Отримуємо DATABASE_URL з .env (за замовчуванням для Docker)
+database_url = os.getenv("DATABASE_URL", "******db:5432/app_db")
 if "postgresql+asyncpg://" in database_url:
     database_url = database_url.replace("postgresql+asyncpg://", "postgresql+psycopg2://")
 
@@ -40,7 +41,12 @@ def run_migrations_online() -> None:
     )
 
     with connectable.connect() as connection:
-        context.configure(connection=connection, target_metadata=target_metadata)
+        connection.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
+        connection.commit()
+        context.configure(
+            connection=connection,
+            target_metadata=target_metadata,
+        )
 
         with context.begin_transaction():
             context.run_migrations()

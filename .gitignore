@@ -1,4 +1,6 @@
 backend/.env
+infra/docker/.env
+backend/data/hr/
 .venv/
 **/__pycache__/
 *.py[cod]
