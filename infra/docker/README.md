@@ -30,11 +30,11 @@ docker compose up --build
 дані та запускає FastAPI. Якщо міграція або імпорт завершується з помилкою,
 застосунок не запускається.
 
-PostgreSQL extension `vector` створюється автоматично двома способами:
-`init.sql` — під час першої ініціалізації нового volume, а Alembic hook
-додає `CREATE EXTENSION IF NOT EXISTS vector` у кожну нову міграцію,
-створену через `revision --autogenerate`. Завдяки `IF NOT EXISTS` повторний
-запуск безпечний.
+PostgreSQL extension `vector` створюється автоматично через `init.sql` під
+час першої ініціалізації нового volume. Перед кожним online-запуском Alembic
+також виконує `CREATE EXTENSION IF NOT EXISTS vector`, тому старий volume без
+extension виправляється до застосування міграцій. Initial migration містить
+ту саму ідемпотентну гарантію для offline SQL-генерації.
 
 ## Перевірка запуску
 
