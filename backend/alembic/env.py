@@ -11,8 +11,8 @@ load_dotenv()
 
 config = context.config
 
-# Отримуємо DATABASE_URL з .env (за замовчуванням для локального запуску)
-database_url = os.getenv("DATABASE_URL", "******localhost:5432/app_db")
+# Отримуємо DATABASE_URL з .env (за замовчуванням для Docker)
+database_url = os.getenv("DATABASE_URL", "******db:5432/app_db")
 if "postgresql+asyncpg://" in database_url:
     database_url = database_url.replace("postgresql+asyncpg://", "postgresql+psycopg2://")
 
