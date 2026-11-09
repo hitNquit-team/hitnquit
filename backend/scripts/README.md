@@ -3,7 +3,7 @@
 Run this after the database migration:
 
 ```powershell
-cd D:\uni\Hit&Quit\hitnquit\backend
+cd D:\Hit&Quit\hitnquit\backend
 python -m alembic upgrade head
 python -m scripts.seed_db --data-dir D:\data\hr --tenant-name "Example organisation"
 ```

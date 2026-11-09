@@ -30,7 +30,7 @@ services:
       - DATABASE_URL=${DATABASE_URL}
       - LOG_LEVEL=${LOG_LEVEL}
     volumes:
-      - ../../backend/app:/app/app
+      - ../../backend/app:/app/backend/app
     depends_on:
       db:
         condition: service_healthy
