@@ -7,8 +7,6 @@ import os
 import sys
 import uuid
 from pathlib import Path
-from typing import Sequence
-
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 
@@ -18,10 +16,9 @@ if __package__ in {None, ""}:
 from app.db.models import Employee, ExitFeedback, Resume, Tenant
 from app.services.prediction_service import (
     AuthorizedTenantContext,
-    PredictionValues,
+    WeightedRetentionPredictor,
     create_prediction,
 )
-from app.services.similarity_search import SimilarProfile
 
 
 EMBEDDING_DIMENSION = 384
@@ -36,48 +33,25 @@ def _stable_id(kind: str, record_id: str) -> uuid.UUID:
     return uuid.uuid5(NAMESPACE, f"{kind}:{record_id}")
 
 
-class DemoPredictor:
-    async def predict(
-        self,
-        *,
-        candidate_embedding: Sequence[float],
-        neighbors: Sequence[SimilarProfile],
-    ) -> PredictionValues:
-        average_similarity = sum(
-            neighbor.similarity for neighbor in neighbors
-        ) / len(neighbors)
-        return PredictionValues(
-            predicted_tenure=round(12 + 24 * average_similarity, 2),
-            risk_score=round(1 - average_similarity, 4),
-            likely_reason=neighbors[0].exit_reason,
-            model_version="demo-test-v1",
-            evidence={
-                "predictor": "deterministic local demo",
-                "neighbor_count": len(neighbors),
-                "embedding_dimension": len(candidate_embedding),
-            },
-        )
-
-
 async def _upsert_demo_data(session: AsyncSession, tenant: Tenant) -> uuid.UUID:
     records = (
-        ("candidate", _vector(1.0), None),
-        ("history-high", _vector(1.0), "resignation"),
-        ("history-medium", _vector(0.8, 0.6), "relocation"),
-        ("history-low", _vector(0.6, 0.8), "management"),
+        ("candidate", _vector(1.0), None, None),
+        ("history-high", _vector(1.0), "resignation", 6),
+        ("history-medium", _vector(0.8, 0.6), "relocation", 24),
+        ("history-low", _vector(0.6, 0.8), "management", 36),
     )
     candidate_id = _stable_id("employee", "candidate")
     employee_ids = [
         _stable_id("employee", record_id)
-        for record_id, _, _ in records
+        for record_id, _, _, _ in records
     ]
     resume_ids = [
         _stable_id("resume", record_id)
-        for record_id, _, _ in records
+        for record_id, _, _, _ in records
     ]
     feedback_ids = [
         _stable_id("feedback", record_id)
-        for record_id, _, exit_reason in records
+        for record_id, _, exit_reason, _ in records
         if exit_reason is not None
     ]
 
@@ -99,7 +73,7 @@ async def _upsert_demo_data(session: AsyncSession, tenant: Tenant) -> uuid.UUID:
         for feedback in feedbacks
     }
 
-    for record_id, embedding, exit_reason in records:
+    for record_id, embedding, exit_reason, tenure_months in records:
         employee_id = _stable_id("employee", record_id)
         employee = existing_employees.get(employee_id)
         if employee is None:
@@ -109,11 +83,13 @@ async def _upsert_demo_data(session: AsyncSession, tenant: Tenant) -> uuid.UUID:
                 status="active" if exit_reason is None else "exited",
                 source_dataset="test-prediction",
                 source_record_id=record_id,
+                tenure_months=tenure_months,
             )
             session.add(employee)
         else:
             employee.tenant_id = tenant.id
             employee.status = "active" if exit_reason is None else "exited"
+            employee.tenure_months = tenure_months
 
         resume_id = _stable_id("resume", record_id)
         resume = existing_resumes.get(resume_id)
@@ -177,7 +153,7 @@ async def _run(database_url: str, tenant_name: str) -> None:
                 auth_context=AuthorizedTenantContext(tenant_id=tenant.id),
                 employee_id=candidate_id,
                 resume_id=_stable_id("resume", "candidate"),
-                predictor=DemoPredictor(),
+                predictor=WeightedRetentionPredictor(),
                 neighbor_limit=3,
             )
             await session.commit()
