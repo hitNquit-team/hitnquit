@@ -40,6 +40,52 @@ class RetentionPredictor(Protocol):
         ...
 
 
+class WeightedRetentionPredictor:
+    """Calculate MVP metrics from deterministic, similarity-weighted neighbors."""
+
+    async def predict(
+        self,
+        *,
+        candidate_embedding: Sequence[float],
+        neighbors: Sequence[SimilarProfile],
+    ) -> PredictionValues:
+        weighted_neighbors = [
+            neighbor
+            for neighbor in neighbors
+            if neighbor.similarity > 0
+            and neighbor.tenure_months is not None
+            and neighbor.tenure_months >= 0
+        ]
+        if not weighted_neighbors:
+            raise ValueError("at least one neighbor with a positive similarity and tenure is required")
+
+        total_weight = sum(neighbor.similarity for neighbor in weighted_neighbors)
+        if total_weight <= 0:
+            raise ValueError("neighbor similarity weights must have a positive total")
+
+        predicted_tenure = (
+            sum(
+                neighbor.similarity * neighbor.tenure_months
+                for neighbor in weighted_neighbors
+            )
+            / total_weight
+        )
+        risk_score = (
+            sum(
+                neighbor.similarity
+                for neighbor in weighted_neighbors
+                if neighbor.tenure_months <= EARLY_EXIT_HORIZON_MONTHS
+            )
+            / total_weight
+        )
+        return PredictionValues(
+            predicted_tenure=round(predicted_tenure, 2),
+            risk_score=round(risk_score, 4),
+            likely_reason=None,
+            model_version=PREDICTOR_MODEL_VERSION,
+        )
+
+
 @dataclass(frozen=True, slots=True)
 class PredictionRunResult:
     status: Literal["completed", "insufficient_data"]
@@ -48,6 +94,9 @@ class PredictionRunResult:
 
 
 DEFAULT_MINIMUM_NEIGHBORS = 3
+DEFAULT_NEIGHBOR_LIMIT = 10
+EARLY_EXIT_HORIZON_MONTHS = 12
+PREDICTOR_MODEL_VERSION = "weighted-neighbors-v1"
 
 
 class PredictionPersistenceError(RuntimeError):
@@ -131,8 +180,15 @@ async def _run_prediction(
     required_neighbors: int,
 ) -> tuple[Literal["completed", "insufficient_data"], PredictionValues | None, dict[str, Any]]:
     neighbor_evidence = _neighbor_evidence(neighbors)
+    metric_neighbors = [
+        neighbor
+        for neighbor in neighbors
+        if neighbor.similarity > 0
+        and neighbor.tenure_months is not None
+        and neighbor.tenure_months >= 0
+    ]
 
-    if len(neighbors) < required_neighbors:
+    if len(metric_neighbors) < required_neighbors:
         status: Literal["completed", "insufficient_data"] = "insufficient_data"
         values = None
         evidence: dict[str, Any] = {
@@ -143,7 +199,7 @@ async def _run_prediction(
         status = "completed"
         values = await predictor.predict(
             candidate_embedding=candidate_embedding,
-            neighbors=neighbors,
+            neighbors=metric_neighbors,
         )
         evidence = {
             "status": status,
@@ -212,7 +268,7 @@ async def create_prediction(
     employee_id: uuid.UUID,
     resume_id: uuid.UUID,
     predictor: RetentionPredictor,
-    neighbor_limit: int = 10,
+    neighbor_limit: int = DEFAULT_NEIGHBOR_LIMIT,
     minimum_neighbors: int | None = DEFAULT_MINIMUM_NEIGHBORS,
 ) -> PredictionRunResult:
     """Create one immutable prediction using only the caller's tenant history."""

@@ -12,6 +12,7 @@ from app.db.models import Prediction
 from app.services.prediction_service import (
     PredictionValues,
     PredictionPersistenceError,
+    WeightedRetentionPredictor,
     _create_prediction_record,
     _persist_prediction,
     _run_prediction,
@@ -41,6 +42,65 @@ class DemoPredictor:
 
 
 class PredictionServiceTests(unittest.IsolatedAsyncioTestCase):
+    async def test_weighted_prediction_uses_fixed_specification(self) -> None:
+        neighbors = [
+            SimilarProfile(
+                employee_id=uuid.uuid4(),
+                similarity=1.0,
+                exit_reason="relocation",
+                tenure_months=6,
+            ),
+            SimilarProfile(
+                employee_id=uuid.uuid4(),
+                similarity=0.8,
+                exit_reason="management",
+                tenure_months=24,
+            ),
+            SimilarProfile(
+                employee_id=uuid.uuid4(),
+                similarity=0.6,
+                exit_reason="resignation",
+                tenure_months=36,
+            ),
+        ]
+
+        values = await WeightedRetentionPredictor().predict(
+            candidate_embedding=[1.0, 0.0],
+            neighbors=neighbors,
+        )
+
+        self.assertEqual(19.5, values.predicted_tenure)
+        self.assertEqual(0.4167, values.risk_score)
+        self.assertEqual("weighted-neighbors-v1", values.model_version)
+
+    async def test_missing_tenure_reduces_metric_neighbor_count(self) -> None:
+        predictor = DemoPredictor()
+        neighbors = [
+            SimilarProfile(
+                employee_id=uuid.uuid4(),
+                similarity=1.0,
+                exit_reason="relocation",
+                tenure_months=None,
+            ),
+            SimilarProfile(
+                employee_id=uuid.uuid4(),
+                similarity=0.8,
+                exit_reason="management",
+                tenure_months=24,
+            ),
+        ]
+
+        status, values, evidence = await _run_prediction(
+            predictor=predictor,
+            candidate_embedding=[1.0, 0.0],
+            neighbors=neighbors,
+            required_neighbors=2,
+        )
+
+        self.assertEqual("insufficient_data", status)
+        self.assertIsNone(values)
+        self.assertEqual(0, predictor.call_count)
+
     def test_prediction_values_are_rounded_before_record_creation(self) -> None:
         prediction = _create_prediction_record(
             employee_id=uuid.uuid4(),
@@ -107,6 +167,7 @@ class PredictionServiceTests(unittest.IsolatedAsyncioTestCase):
             employee_id=uuid.uuid4(),
             similarity=0.75,
             exit_reason="relocation",
+            tenure_months=18,
         )
 
         status, values, evidence = await _run_prediction(
