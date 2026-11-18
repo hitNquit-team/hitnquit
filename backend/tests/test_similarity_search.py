@@ -71,6 +71,7 @@ class SimilaritySearchIntegrationTests(IsolatedAsyncioTestCase):
         embedding: list[float] | None,
         feedback_reason: str | None,
         submitted_at: datetime | None = None,
+        tenure_months: int | None = 12,
     ) -> None:
         self.session.add(
             Employee(
@@ -79,6 +80,7 @@ class SimilaritySearchIntegrationTests(IsolatedAsyncioTestCase):
                 status="exited",
                 source_dataset="test",
                 source_record_id=str(employee_id),
+                tenure_months=tenure_months,
             )
         )
         if embedding is not None:
@@ -177,6 +179,34 @@ class SimilaritySearchIntegrationTests(IsolatedAsyncioTestCase):
         )
 
         self.assertEqual([only_match], [result.employee_id for result in results])
+
+    async def test_excludes_missing_tenure_before_applying_limit(self) -> None:
+        missing_tenure = uuid.UUID("00000000-0000-0000-0000-000000000045")
+        valid_match = uuid.UUID("00000000-0000-0000-0000-000000000046")
+        await self._add_employee(
+            missing_tenure,
+            TENANT_ID,
+            _vector(1.0),
+            "missing tenure",
+            tenure_months=None,
+        )
+        await self._add_employee(
+            valid_match,
+            TENANT_ID,
+            _vector(0.9, 0.435889894),
+            "valid match",
+            tenure_months=18,
+        )
+
+        results = await find_similar_profiles(
+            self.session,
+            tenant_id=TENANT_ID,
+            candidate_embedding=_vector(1.0),
+            limit=1,
+            candidate_employee_id=CANDIDATE_ID,
+        )
+
+        self.assertEqual([valid_match], [result.employee_id for result in results])
 
     async def test_returns_each_employee_once_when_multiple_resumes_match(self) -> None:
         employee_id = uuid.UUID("00000000-0000-0000-0000-000000000051")

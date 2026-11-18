@@ -16,6 +16,7 @@ class SimilarProfile:
     employee_id: uuid.UUID
     similarity: float
     exit_reason: str
+    tenure_months: int | None
 
 
 def _latest_valid_feedback() -> Subquery:
@@ -57,8 +58,10 @@ async def find_similar_profiles(
     filters = [
         Employee.tenant_id == tenant_id,
         Resume.embedding.is_not(None),
-        func.l2_norm(Resume.embedding) != 0,
+        func.vector_norm(Resume.embedding) != 0,
         similarity_expression > 0,
+        Employee.tenure_months.is_not(None),
+        Employee.tenure_months >= 0,
     ]
     if candidate_employee_id is not None:
         filters.append(Employee.id != candidate_employee_id)
@@ -72,6 +75,7 @@ async def find_similar_profiles(
             Employee.id.label("employee_id"),
             similarity,
             feedback.c.exit_reason,
+            Employee.tenure_months,
             profile_rank,
         )
         .join(Resume, Resume.employee_id == Employee.id)
@@ -90,6 +94,7 @@ async def find_similar_profiles(
             candidate_profiles.c.employee_id,
             candidate_profiles.c.similarity,
             candidate_profiles.c.exit_reason,
+            candidate_profiles.c.tenure_months,
         )
         .where(candidate_profiles.c.profile_rank == 1)
         .order_by(
@@ -105,6 +110,7 @@ async def find_similar_profiles(
             employee_id=employee_id,
             similarity=float(profile_similarity),
             exit_reason=exit_reason,
+            tenure_months=tenure_months,
         )
-        for employee_id, profile_similarity, exit_reason in result.all()
+        for employee_id, profile_similarity, exit_reason, tenure_months in result.all()
     ]
