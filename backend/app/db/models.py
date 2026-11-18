@@ -91,6 +91,7 @@ class Prediction(Base):
     resume_id: Mapped[uuid.UUID] = mapped_column(ForeignKey('resumes.id'), nullable=False)
     predicted_tenure: Mapped[Optional[float]] = mapped_column(Numeric(10, 2))
     risk_score: Mapped[Optional[float]] = mapped_column(Numeric(6, 4))
+    confidence: Mapped[Optional[float]] = mapped_column(Numeric(6, 4))
     likely_reason: Mapped[Optional[str]] = mapped_column(Text)
     evidence: Mapped[Optional[dict]] = mapped_column(JSONB)
     model_version: Mapped[Optional[str]] = mapped_column(Text)

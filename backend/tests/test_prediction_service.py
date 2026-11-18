@@ -73,6 +73,44 @@ class PredictionServiceTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(0.4167, values.risk_score)
         self.assertEqual("weighted-neighbors-v1", values.model_version)
 
+    async def test_prediction_explanation_uses_top_five_and_is_deterministic(self) -> None:
+        predictor = DemoPredictor()
+        neighbors = [
+            SimilarProfile(
+                employee_id=uuid.uuid4(),
+                similarity=similarity,
+                exit_reason=reason,
+                tenure_months=18,
+            )
+            for similarity, reason in (
+                (1.0, "relocation"),
+                (0.9, "management"),
+                (0.8, "relocation"),
+                (0.7, "resignation"),
+                (0.6, "relocation"),
+                (0.5, "management"),
+            )
+        ]
+
+        first = await _run_prediction(
+            predictor=predictor,
+            candidate_embedding=[1.0, 0.0],
+            neighbors=neighbors,
+            required_neighbors=3,
+        )
+        second = await _run_prediction(
+            predictor=DemoPredictor(),
+            candidate_embedding=[1.0, 0.0],
+            neighbors=neighbors,
+            required_neighbors=3,
+        )
+
+        self.assertEqual("relocation", first[1].likely_reason)
+        self.assertEqual(5, len(first[2]["neighbors"]))
+        self.assertEqual(1, first[2]["neighbors"][0]["rank"])
+        self.assertEqual(first[2]["confidence"], second[2]["confidence"])
+        self.assertEqual(0.48, first[2]["confidence"])
+
     async def test_missing_tenure_reduces_metric_neighbor_count(self) -> None:
         predictor = DemoPredictor()
         neighbors = [

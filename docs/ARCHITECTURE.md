@@ -244,6 +244,19 @@ API має бути версійованим (`/api/v1`), а довгі опер
   Рівні similarity не отримують штучного різного вагового підсилення.
 - Версія формули MVP — `weighted-neighbors-v1`. Однакові вхідні дані, однакова
   конфігурація та однакові історичні записи завжди дають однакові результати.
+- Пояснення зберігається за контрактом `prediction-evidence-v1`: `status`,
+  `schema_version` і `neighbors`. `neighbors` містить перші п'ять результатів
+  пошуку (або всі доступні, якщо їх менше), кожен із `rank`, `employee_id`,
+  округленою до 4 знаків `similarity` та фактичним
+  `matched_exit_reason`. Результати пошуку не доповнюються вигаданими записами.
+- `likely_reason` — причина з найбільшою сумою similarity серед цих neighbors.
+  За рівності спочатку обирається причина найближчого neighbor, потім
+  лексикографічно менша причина. Отже, значення походить лише з exit feedback.
+- `confidence` — детермінована оцінка
+  `round(clamp(mean_similarity * reason_agreement, 0, 1), 4)`, де
+  `reason_agreement` — частка суми similarity, що припадає на `likely_reason`.
+  Для однакових neighbors результат незмінний; для `insufficient_data` confidence
+  і likely_reason не зберігаються.
 
 #### Acceptance criteria для вибірки сусідів
 

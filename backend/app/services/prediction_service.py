@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from decimal import Decimal
 from typing import Any, Literal, Mapping, Protocol, Sequence
 
@@ -27,6 +27,7 @@ class PredictionValues:
     risk_score: float | None
     likely_reason: str | None
     model_version: str
+    confidence: float | None = None
     evidence: Mapping[str, Any] | None = None
 
 
@@ -97,6 +98,8 @@ DEFAULT_MINIMUM_NEIGHBORS = 3
 DEFAULT_NEIGHBOR_LIMIT = 10
 EARLY_EXIT_HORIZON_MONTHS = 12
 PREDICTOR_MODEL_VERSION = "weighted-neighbors-v1"
+EVIDENCE_MATCH_COUNT = 5
+EVIDENCE_SCHEMA_VERSION = "prediction-evidence-v1"
 
 
 class PredictionPersistenceError(RuntimeError):
@@ -106,12 +109,42 @@ class PredictionPersistenceError(RuntimeError):
 def _neighbor_evidence(neighbors: Sequence[SimilarProfile]) -> list[dict[str, Any]]:
     return [
         {
+            "rank": rank,
             "employee_id": str(neighbor.employee_id),
-            "similarity": neighbor.similarity,
+            "similarity": round(neighbor.similarity, 4),
             "matched_exit_reason": neighbor.exit_reason,
         }
-        for neighbor in neighbors
+        for rank, neighbor in enumerate(neighbors, start=1)
     ]
+
+
+def _reason_and_confidence(
+    neighbors: Sequence[SimilarProfile],
+) -> tuple[str | None, float | None]:
+    """Derive explanation fields only from the ordered nearest matches."""
+    evidence_neighbors = neighbors[:EVIDENCE_MATCH_COUNT]
+    if not evidence_neighbors:
+        return None, None
+
+    reason_weights: dict[str, float] = {}
+    first_reason_rank: dict[str, int] = {}
+    for rank, neighbor in enumerate(evidence_neighbors):
+        reason = neighbor.exit_reason.strip()
+        reason_weights[reason] = reason_weights.get(reason, 0.0) + neighbor.similarity
+        first_reason_rank.setdefault(reason, rank)
+
+    likely_reason = min(
+        reason_weights,
+        key=lambda reason: (-reason_weights[reason], first_reason_rank[reason], reason),
+    )
+    total_weight = sum(neighbor.similarity for neighbor in evidence_neighbors)
+    if total_weight <= 0:
+        return likely_reason, 0.0
+
+    mean_similarity = total_weight / len(evidence_neighbors)
+    agreement = reason_weights[likely_reason] / total_weight
+    confidence = round(max(0.0, min(1.0, mean_similarity * agreement)), 4)
+    return likely_reason, confidence
 
 
 def _rounded_decimal(value: float | None, places: int) -> Decimal | None:
@@ -179,7 +212,8 @@ async def _run_prediction(
     neighbors: Sequence[SimilarProfile],
     required_neighbors: int,
 ) -> tuple[Literal["completed", "insufficient_data"], PredictionValues | None, dict[str, Any]]:
-    neighbor_evidence = _neighbor_evidence(neighbors)
+    evidence_neighbors = neighbors[:EVIDENCE_MATCH_COUNT]
+    likely_reason, confidence = _reason_and_confidence(evidence_neighbors)
     metric_neighbors = [
         neighbor
         for neighbor in neighbors
@@ -192,8 +226,9 @@ async def _run_prediction(
         status: Literal["completed", "insufficient_data"] = "insufficient_data"
         values = None
         evidence: dict[str, Any] = {
+            "schema_version": EVIDENCE_SCHEMA_VERSION,
             "status": status,
-            "neighbors": neighbor_evidence,
+            "neighbors": _neighbor_evidence(evidence_neighbors),
         }
     else:
         status = "completed"
@@ -201,9 +236,17 @@ async def _run_prediction(
             candidate_embedding=candidate_embedding,
             neighbors=metric_neighbors,
         )
+        values = replace(
+            values,
+            likely_reason=likely_reason,
+            confidence=confidence,
+        )
         evidence = {
+            "schema_version": EVIDENCE_SCHEMA_VERSION,
             "status": status,
-            "neighbors": neighbor_evidence,
+            "neighbors": _neighbor_evidence(evidence_neighbors),
+            "likely_reason": likely_reason,
+            "confidence": confidence,
         }
         if values.evidence:
             evidence["prediction"] = dict(values.evidence)
@@ -228,6 +271,7 @@ def _create_prediction_record(
             else _rounded_decimal(values.predicted_tenure, 2)
         ),
         risk_score=None if values is None else _rounded_decimal(values.risk_score, 4),
+        confidence=None if values is None else _rounded_decimal(values.confidence, 4),
         likely_reason=None if values is None else values.likely_reason,
         evidence=evidence,
         model_version=None if values is None else values.model_version,
