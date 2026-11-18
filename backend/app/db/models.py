@@ -26,7 +26,7 @@ class Employee(Base):
     __tablename__ = 'employees'
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    tenant_id: Mapped[uuid.UUID] = mapped_column(ForeignKey('tenants.id'), nullable=False)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(ForeignKey('tenants.id'), nullable=False, index=True)
     status: Mapped[str] = mapped_column(Text, nullable=False)
     hire_date: Mapped[Optional[date]] = mapped_column(Date)
     exit_date: Mapped[Optional[date]] = mapped_column(Date)
@@ -52,7 +52,7 @@ class Resume(Base):
     __tablename__ = 'resumes'
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    employee_id: Mapped[uuid.UUID] = mapped_column(ForeignKey('employees.id'), nullable=False)
+    employee_id: Mapped[uuid.UUID] = mapped_column(ForeignKey('employees.id'), nullable=False, index=True)
     parsed_skills: Mapped[Optional[dict]] = mapped_column(JSONB)
     profile_text: Mapped[Optional[str]] = mapped_column(Text)
     
@@ -72,7 +72,7 @@ class ExitFeedback(Base):
     __tablename__ = 'exit_feedbacks'
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    employee_id: Mapped[uuid.UUID] = mapped_column(ForeignKey('employees.id'), nullable=False)
+    employee_id: Mapped[uuid.UUID] = mapped_column(ForeignKey('employees.id'), nullable=False, index=True)
     exit_reason: Mapped[Optional[str]] = mapped_column(Text)
     details: Mapped[Optional[dict]] = mapped_column(JSONB)
     source_dataset: Mapped[str] = mapped_column(Text, nullable=False)
@@ -89,8 +89,8 @@ class Prediction(Base):
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     employee_id: Mapped[uuid.UUID] = mapped_column(ForeignKey('employees.id'), nullable=False)
     resume_id: Mapped[uuid.UUID] = mapped_column(ForeignKey('resumes.id'), nullable=False)
-    predicted_tenure: Mapped[Optional[float]] = mapped_column(Numeric)
-    risk_score: Mapped[Optional[float]] = mapped_column(Numeric)
+    predicted_tenure: Mapped[Optional[float]] = mapped_column(Numeric(10, 2))
+    risk_score: Mapped[Optional[float]] = mapped_column(Numeric(6, 4))
     likely_reason: Mapped[Optional[str]] = mapped_column(Text)
     evidence: Mapped[Optional[dict]] = mapped_column(JSONB)
     model_version: Mapped[Optional[str]] = mapped_column(Text)
@@ -108,7 +108,7 @@ class PredictionMatch(Base):
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     prediction_id: Mapped[uuid.UUID] = mapped_column(ForeignKey('predictions.id'), nullable=False)
     matched_employee_id: Mapped[uuid.UUID] = mapped_column(ForeignKey('employees.id'), nullable=False)
-    similarity: Mapped[Optional[float]] = mapped_column(Numeric)
+    similarity: Mapped[Optional[float]] = mapped_column(Numeric(6, 4))
     matched_exit_reason: Mapped[Optional[str]] = mapped_column(Text)
 
     # Зв'язки
