@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import os
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 from unittest import IsolatedAsyncioTestCase
 
 from sqlalchemy.exc import SQLAlchemyError
@@ -208,6 +208,13 @@ class SimilaritySearchIntegrationTests(IsolatedAsyncioTestCase):
                 candidate_embedding=[],
             )
 
+        with self.assertRaisesRegex(ValueError, "zero vector"):
+            await find_similar_profiles(
+                self.session,
+                tenant_id=TENANT_ID,
+                candidate_embedding=[0.0] * EMBEDDING_DIMENSION,
+            )
+
         with self.assertRaisesRegex(ValueError, "limit"):
             await find_similar_profiles(
                 self.session,
@@ -215,4 +222,133 @@ class SimilaritySearchIntegrationTests(IsolatedAsyncioTestCase):
                 candidate_embedding=_vector(1.0),
                 limit=0,
             )
+
+    async def test_uses_latest_feedback_with_id_tiebreaker(self) -> None:
+        employee_id = uuid.UUID("00000000-0000-0000-0000-000000000071")
+        older_id = uuid.UUID("00000000-0000-0000-0000-000000000072")
+        tie_lower_id = uuid.UUID("00000000-0000-0000-0000-000000000073")
+        tie_higher_id = uuid.UUID("00000000-0000-0000-0000-000000000074")
+        older_submitted_at = datetime(2025, 1, 1, tzinfo=timezone.utc)
+        tie_submitted_at = datetime(2025, 1, 2, tzinfo=timezone.utc)
+
+        await self._add_employee(
+            employee_id,
+            TENANT_ID,
+            _vector(1.0),
+            None,
+        )
+        self.session.add_all(
+            [
+                ExitFeedback(
+                    id=older_id,
+                    employee_id=employee_id,
+                    exit_reason="older",
+                    source_dataset="test",
+                    source_record_id="older",
+                    submitted_at=older_submitted_at,
+                ),
+                ExitFeedback(
+                    id=tie_lower_id,
+                    employee_id=employee_id,
+                    exit_reason="tie lower id",
+                    source_dataset="test",
+                    source_record_id="tie lower id",
+                    submitted_at=tie_submitted_at,
+                ),
+                ExitFeedback(
+                    id=tie_higher_id,
+                    employee_id=employee_id,
+                    exit_reason="tie higher id",
+                    source_dataset="test",
+                    source_record_id="tie higher id",
+                    submitted_at=tie_submitted_at,
+                ),
+            ]
+        )
+        await self.session.flush()
+
+        results = await find_similar_profiles(
+            self.session,
+            tenant_id=TENANT_ID,
+            candidate_embedding=_vector(1.0),
+            limit=10,
+            candidate_employee_id=CANDIDATE_ID,
+        )
+
+        self.assertEqual(1, len(results))
+        self.assertEqual("tie higher id", results[0].exit_reason)
+
+    async def test_uses_latest_valid_feedback_when_newer_feedback_is_invalid(
+        self,
+    ) -> None:
+        employee_id = uuid.UUID("00000000-0000-0000-0000-000000000074")
+        await self._add_employee(
+            employee_id,
+            TENANT_ID,
+            _vector(1.0),
+            "valid older feedback",
+            submitted_at=datetime(2025, 1, 1, tzinfo=timezone.utc),
+        )
+        self.session.add_all(
+            [
+                ExitFeedback(
+                    id=uuid.UUID("00000000-0000-0000-0000-000000000075"),
+                    employee_id=employee_id,
+                    exit_reason="   ",
+                    source_dataset="test",
+                    source_record_id="blank",
+                    submitted_at=datetime(2025, 1, 2, tzinfo=timezone.utc),
+                ),
+                ExitFeedback(
+                    id=uuid.UUID("00000000-0000-0000-0000-000000000076"),
+                    employee_id=employee_id,
+                    exit_reason=None,
+                    source_dataset="test",
+                    source_record_id="null",
+                    submitted_at=datetime(2025, 1, 3, tzinfo=timezone.utc),
+                ),
+            ]
+        )
+        await self.session.flush()
+
+        results = await find_similar_profiles(
+            self.session,
+            tenant_id=TENANT_ID,
+            candidate_embedding=_vector(1.0),
+            limit=10,
+            candidate_employee_id=CANDIDATE_ID,
+        )
+
+        self.assertEqual(1, len(results))
+        self.assertEqual("valid older feedback", results[0].exit_reason)
+
+    async def test_excludes_stored_zero_vectors(self) -> None:
+        zero_vector_employee = uuid.UUID("00000000-0000-0000-0000-000000000061")
+        valid_employee = uuid.UUID("00000000-0000-0000-0000-000000000062")
+
+        await self._add_employee(
+            zero_vector_employee,
+            TENANT_ID,
+            [0.0] * EMBEDDING_DIMENSION,
+            "invalid embedding",
+        )
+        await self._add_employee(
+            valid_employee,
+            TENANT_ID,
+            _vector(1.0),
+            "valid embedding",
+        )
+
+        results = await find_similar_profiles(
+            self.session,
+            tenant_id=TENANT_ID,
+            candidate_embedding=_vector(1.0),
+            limit=10,
+            candidate_employee_id=CANDIDATE_ID,
+        )
+
+        self.assertEqual(
+            [valid_employee],
+            [result.employee_id for result in results],
+        )
 

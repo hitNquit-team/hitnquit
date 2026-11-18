@@ -45,6 +45,8 @@ async def find_similar_profiles(
     """Return the deterministic, tenant-scoped nearest historical profiles."""
     if not candidate_embedding:
         raise ValueError("candidate_embedding must not be empty")
+    if not any(value != 0 for value in candidate_embedding):
+        raise ValueError("candidate_embedding must not be a zero vector")
     if limit <= 0:
         raise ValueError("limit must be greater than zero")
 
@@ -55,6 +57,7 @@ async def find_similar_profiles(
     filters = [
         Employee.tenant_id == tenant_id,
         Resume.embedding.is_not(None),
+        func.l2_norm(Resume.embedding) != 0,
         similarity_expression > 0,
     ]
     if candidate_employee_id is not None:

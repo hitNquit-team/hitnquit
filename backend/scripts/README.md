@@ -38,3 +38,40 @@ If a source has no ID, a SHA-256 hash of the row is used. A second run reports
 those rows as `skipped` and does not create duplicates. The final JSON summary
 contains only counts (`imported`, `skipped`, `rejected`); rejected rows are
 logged with dataset and row number, never with row contents.
+
+# Run a test prediction
+
+Start PostgreSQL and the API stack from the repository root:
+
+```powershell
+docker compose -f infra/docker/docker-compose.yml up -d db web
+```
+
+Install the backend dependencies and run the script from the `backend`
+directory:
+
+```powershell
+cd D:\uni\HitNQuit\hitnquit\backend
+python -m pip install -r requirements.txt
+python -m scripts.run_test_prediction `
+  --database-url "postgresql+asyncpg://postgres:postgres@localhost:5432/app_db"
+```
+
+The script creates a demo tenant, a candidate, historical employees, resumes,
+and exit feedback. It then creates and prints one persisted prediction.
+Rerunning the script is safe because its demo records use stable UUIDs.
+
+The tenant name can be changed:
+
+```powershell
+python -m scripts.run_test_prediction `
+  --database-url "postgresql+asyncpg://postgres:postgres@localhost:5432/app_db" `
+  --tenant-name "my-test-tenant"
+```
+
+Instead of passing `--database-url`, set `DATABASE_URL` in your shell:
+
+```powershell
+$env:DATABASE_URL = "postgresql+asyncpg://postgres:postgres@localhost:5432/app_db"
+python -m scripts.run_test_prediction
+```

@@ -67,10 +67,41 @@ async def _upsert_demo_data(session: AsyncSession, tenant: Tenant) -> uuid.UUID:
         ("history-low", _vector(0.6, 0.8), "management"),
     )
     candidate_id = _stable_id("employee", "candidate")
+    employee_ids = [
+        _stable_id("employee", record_id)
+        for record_id, _, _ in records
+    ]
+    resume_ids = [
+        _stable_id("resume", record_id)
+        for record_id, _, _ in records
+    ]
+    feedback_ids = [
+        _stable_id("feedback", record_id)
+        for record_id, _, exit_reason in records
+        if exit_reason is not None
+    ]
+
+    employees = await session.scalars(
+        select(Employee).where(Employee.id.in_(employee_ids))
+    )
+    existing_employees = {employee.id: employee for employee in employees}
+
+    resumes = await session.scalars(
+        select(Resume).where(Resume.id.in_(resume_ids))
+    )
+    existing_resumes = {resume.id: resume for resume in resumes}
+
+    feedbacks = await session.scalars(
+        select(ExitFeedback).where(ExitFeedback.id.in_(feedback_ids))
+    )
+    existing_feedbacks = {
+        feedback.id: feedback
+        for feedback in feedbacks
+    }
 
     for record_id, embedding, exit_reason in records:
         employee_id = _stable_id("employee", record_id)
-        employee = await session.get(Employee, employee_id)
+        employee = existing_employees.get(employee_id)
         if employee is None:
             employee = Employee(
                 id=employee_id,
@@ -85,7 +116,7 @@ async def _upsert_demo_data(session: AsyncSession, tenant: Tenant) -> uuid.UUID:
             employee.status = "active" if exit_reason is None else "exited"
 
         resume_id = _stable_id("resume", record_id)
-        resume = await session.get(Resume, resume_id)
+        resume = existing_resumes.get(resume_id)
         if resume is None:
             session.add(
                 Resume(
@@ -101,7 +132,7 @@ async def _upsert_demo_data(session: AsyncSession, tenant: Tenant) -> uuid.UUID:
 
         if exit_reason is not None:
             feedback_id = _stable_id("feedback", record_id)
-            feedback = await session.get(ExitFeedback, feedback_id)
+            feedback = existing_feedbacks.get(feedback_id)
             if feedback is None:
                 session.add(
                     ExitFeedback(
@@ -149,6 +180,7 @@ async def _run(database_url: str, tenant_name: str) -> None:
                 predictor=DemoPredictor(),
                 neighbor_limit=3,
             )
+            await session.commit()
             print(
                 f"prediction_id={result.prediction.id} "
                 f"tenant_id={tenant.id} status={result.status} "
