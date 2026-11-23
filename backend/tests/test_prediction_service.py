@@ -4,11 +4,13 @@ import unittest
 import uuid
 from decimal import Decimal
 from typing import Sequence
-from unittest.mock import AsyncMock, Mock
+from unittest.mock import AsyncMock, Mock, patch
 
 from sqlalchemy.exc import SQLAlchemyError
+from pydantic import ValidationError
 
 from app.db.models import Prediction
+from app.schemas.prediction import Model2PredictionRequest
 from app.services.prediction_service import (
     PredictionCalculationError,
     PredictionValues,
@@ -18,6 +20,7 @@ from app.services.prediction_service import (
     _persist_prediction,
     _run_prediction,
     _validate_prediction_request,
+    predict_model2,
 )
 from app.services.similarity_search import SimilarProfile
 
@@ -246,6 +249,64 @@ class PredictionServiceTests(unittest.IsolatedAsyncioTestCase):
             evidence["neighbors"][0]["matched_exit_reason"],
         )
         self.assertEqual(1, evidence["prediction"]["neighbor_count"])
+
+    def test_model2_request_validates_required_fields_and_embedding_dimension(self) -> None:
+        tenant_id = uuid.uuid4()
+        vacancy_id = uuid.uuid4()
+        valid_vector = [1.0] + [0.0] * 383
+
+        request = Model2PredictionRequest(
+            tenant_id=tenant_id,
+            candidate_embedding=valid_vector,
+            vacancy_id=vacancy_id,
+        )
+        self.assertEqual(tenant_id, request.tenant_id)
+        self.assertEqual(vacancy_id, request.vacancy_id)
+        self.assertEqual(384, len(request.candidate_embedding))
+
+        with self.assertRaises(ValidationError):
+            Model2PredictionRequest(
+                tenant_id=tenant_id,
+                candidate_embedding=[0.0] * 384,
+                vacancy_id=vacancy_id,
+            )
+        with self.assertRaises(ValidationError):
+            Model2PredictionRequest(
+                tenant_id=tenant_id,
+                candidate_embedding=[1.0] * 383,
+                vacancy_id=vacancy_id,
+            )
+        with self.assertRaises(ValidationError):
+            Model2PredictionRequest(
+                tenant_id=tenant_id,
+                candidate_embedding=valid_vector,
+            )
+
+    async def test_model2_adapter_returns_explicit_insufficient_metrics(self) -> None:
+        session = Mock()
+        tenant_id = uuid.uuid4()
+        vacancy_id = uuid.uuid4()
+
+        with patch(
+            "app.services.prediction_service.find_similar_profiles",
+            new=AsyncMock(return_value=[]),
+        ):
+            result = await predict_model2(
+                session,
+                tenant_id=tenant_id,
+                candidate_embedding=[1.0] + [0.0] * 383,
+                vacancy_id=vacancy_id,
+            )
+
+        self.assertEqual("insufficient_data", result["status"])
+        self.assertIsNone(result["predicted_tenure"])
+        self.assertIsNone(result["risk_score"])
+        self.assertIsNone(result["likely_reason"])
+        self.assertIsNone(result["confidence"])
+        self.assertFalse(
+            result["evidence"]["metric_availability"]["predicted_tenure"]
+        )
+        self.assertEqual(str(vacancy_id), result["evidence"]["vacancy_id"])
 
     async def test_flush_error_raises_persistence_error_without_committing(self) -> None:
         session = Mock()

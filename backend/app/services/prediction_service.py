@@ -105,6 +105,57 @@ class PredictionCalculationError(RuntimeError):
     """Raised when the predictor cannot calculate metrics for valid neighbors."""
 
 
+async def predict_model2(
+    session: AsyncSession,
+    *,
+    tenant_id: uuid.UUID,
+    candidate_embedding: Sequence[float],
+    vacancy_id: uuid.UUID,
+    employee_id: uuid.UUID | None = None,
+) -> dict[str, Any]:
+    """Call the Model 2 adapter and return the public prediction response shape."""
+    neighbors = await find_similar_profiles(
+        session,
+        tenant_id=tenant_id,
+        candidate_embedding=candidate_embedding,
+        limit=DEFAULT_NEIGHBOR_LIMIT,
+        candidate_employee_id=employee_id,
+    )
+    status, values, evidence = await _run_prediction(
+        predictor=WeightedRetentionPredictor(),
+        candidate_embedding=candidate_embedding,
+        neighbors=neighbors,
+        required_neighbors=DEFAULT_MINIMUM_NEIGHBORS,
+    )
+    evidence["vacancy_id"] = str(vacancy_id)
+
+    if status == "insufficient_data" or values is None:
+        evidence["metric_availability"] = {
+            "predicted_tenure": False,
+            "risk_score": False,
+            "likely_reason": False,
+            "confidence": False,
+        }
+        return {
+            "status": "insufficient_data",
+            "predicted_tenure": None,
+            "risk_score": None,
+            "likely_reason": None,
+            "evidence": evidence,
+            "confidence": None,
+        }
+
+    evidence["model_version"] = values.model_version
+    return {
+        "status": "completed",
+        "predicted_tenure": values.predicted_tenure,
+        "risk_score": values.risk_score,
+        "likely_reason": values.likely_reason,
+        "evidence": evidence,
+        "confidence": values.confidence,
+    }
+
+
 def _is_metric_neighbor(neighbor: SimilarProfile) -> bool:
     return (
         neighbor.similarity > 0
