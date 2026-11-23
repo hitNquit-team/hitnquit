@@ -55,3 +55,40 @@ The embedding model and its revision are configured through
 `1110a243fdf4706b3f48f1d95db1a4f5529b4d41`; the configured model must produce
 384-dimensional normalized vectors, and both its name and revision are stored
 in `resumes.embedding_model`.
+
+# Run a test prediction
+
+Start PostgreSQL and the API stack from the repository root:
+
+```powershell
+docker compose -f infra/docker/docker-compose.yml up -d db web
+```
+
+Install the backend dependencies and run the script from the `backend`
+directory:
+
+```powershell
+cd D:\Hit&Quit\hitnquit\backend
+python -m pip install -r requirements.txt
+python -m scripts.run_test_prediction `
+  --database-url "postgresql+asyncpg://postgres:postgres@localhost:5432/app_db"
+```
+
+The script creates a demo tenant, a candidate, historical employees, resumes,
+and exit feedback. It then creates and prints one persisted prediction.
+Rerunning the script is safe because its demo records use stable UUIDs.
+
+The tenant name can be changed:
+
+```powershell
+python -m scripts.run_test_prediction `
+  --database-url "postgresql+asyncpg://postgres:postgres@localhost:5432/app_db" `
+  --tenant-name "my-test-tenant"
+```
+
+Instead of passing `--database-url`, set `DATABASE_URL` in your shell:
+
+```powershell
+$env:DATABASE_URL = "postgresql+asyncpg://postgres:postgres@localhost:5432/app_db"
+python -m scripts.run_test_prediction
+```
