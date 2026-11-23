@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 from unittest import IsolatedAsyncioTestCase
 
 from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy.engine import make_url
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 
 from app.db.models import Employee, ExitFeedback, Resume, Tenant
@@ -27,12 +28,7 @@ class SimilaritySearchIntegrationTests(IsolatedAsyncioTestCase):
         database_url = os.getenv("TEST_DATABASE_URL")
         if not database_url:
             self.skipTest("TEST_DATABASE_URL is required for PostgreSQL integration tests")
-        if database_url.startswith("postgresql+psycopg2://"):
-            database_url = database_url.replace(
-                "postgresql+psycopg2://",
-                "postgresql+asyncpg://",
-                1,
-            )
+        database_url = make_url(database_url).set(drivername="postgresql+asyncpg")
 
         self.engine = create_async_engine(database_url)
         try:

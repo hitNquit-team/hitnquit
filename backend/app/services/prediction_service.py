@@ -16,6 +16,14 @@ from app.services.similarity_search import (
 )
 
 
+DEFAULT_MINIMUM_NEIGHBORS = 3
+DEFAULT_NEIGHBOR_LIMIT = 10
+EARLY_EXIT_HORIZON_MONTHS = 12
+PREDICTOR_MODEL_VERSION = "weighted-neighbors-v1"
+EVIDENCE_MATCH_COUNT = 5
+EVIDENCE_SCHEMA_VERSION = "prediction-evidence-v1"
+
+
 @dataclass(frozen=True, slots=True)
 class AuthorizedTenantContext:
     tenant_id: uuid.UUID
@@ -50,31 +58,26 @@ class WeightedRetentionPredictor:
         candidate_embedding: Sequence[float],
         neighbors: Sequence[SimilarProfile],
     ) -> PredictionValues:
-        weighted_neighbors = [
-            neighbor
-            for neighbor in neighbors
-            if neighbor.similarity > 0
-            and neighbor.tenure_months is not None
-            and neighbor.tenure_months >= 0
-        ]
-        if not weighted_neighbors:
+        # Neighbors are already filtered by `_is_metric_neighbor` in
+        # `_run_prediction`, so they are used as-is without copying.
+        if not neighbors:
             raise ValueError("at least one neighbor with a positive similarity and tenure is required")
 
-        total_weight = sum(neighbor.similarity for neighbor in weighted_neighbors)
+        total_weight = sum(neighbor.similarity for neighbor in neighbors)
         if total_weight <= 0:
             raise ValueError("neighbor similarity weights must have a positive total")
 
         predicted_tenure = (
             sum(
                 neighbor.similarity * neighbor.tenure_months
-                for neighbor in weighted_neighbors
+                for neighbor in neighbors
             )
             / total_weight
         )
         risk_score = (
             sum(
                 neighbor.similarity
-                for neighbor in weighted_neighbors
+                for neighbor in neighbors
                 if neighbor.tenure_months <= EARLY_EXIT_HORIZON_MONTHS
             )
             / total_weight
@@ -94,16 +97,20 @@ class PredictionRunResult:
     neighbors: tuple[SimilarProfile, ...]
 
 
-DEFAULT_MINIMUM_NEIGHBORS = 3
-DEFAULT_NEIGHBOR_LIMIT = 10
-EARLY_EXIT_HORIZON_MONTHS = 12
-PREDICTOR_MODEL_VERSION = "weighted-neighbors-v1"
-EVIDENCE_MATCH_COUNT = 5
-EVIDENCE_SCHEMA_VERSION = "prediction-evidence-v1"
-
-
 class PredictionPersistenceError(RuntimeError):
     """Raised when a prediction and its matches cannot be persisted."""
+
+
+class PredictionCalculationError(RuntimeError):
+    """Raised when the predictor cannot calculate metrics for valid neighbors."""
+
+
+def _is_metric_neighbor(neighbor: SimilarProfile) -> bool:
+    return (
+        neighbor.similarity > 0
+        and neighbor.tenure_months is not None
+        and neighbor.tenure_months >= 0
+    )
 
 
 def _neighbor_evidence(neighbors: Sequence[SimilarProfile]) -> list[dict[str, Any]]:
@@ -214,13 +221,7 @@ async def _run_prediction(
 ) -> tuple[Literal["completed", "insufficient_data"], PredictionValues | None, dict[str, Any]]:
     evidence_neighbors = neighbors[:EVIDENCE_MATCH_COUNT]
     likely_reason, confidence = _reason_and_confidence(evidence_neighbors)
-    metric_neighbors = [
-        neighbor
-        for neighbor in neighbors
-        if neighbor.similarity > 0
-        and neighbor.tenure_months is not None
-        and neighbor.tenure_months >= 0
-    ]
+    metric_neighbors = [neighbor for neighbor in neighbors if _is_metric_neighbor(neighbor)]
 
     if len(metric_neighbors) < required_neighbors:
         status: Literal["completed", "insufficient_data"] = "insufficient_data"
@@ -232,10 +233,15 @@ async def _run_prediction(
         }
     else:
         status = "completed"
-        values = await predictor.predict(
-            candidate_embedding=candidate_embedding,
-            neighbors=metric_neighbors,
-        )
+        try:
+            values = await predictor.predict(
+                candidate_embedding=candidate_embedding,
+                neighbors=metric_neighbors,
+            )
+        except ValueError as exc:
+            raise PredictionCalculationError(
+                "predictor failed to calculate metrics"
+            ) from exc
         values = replace(
             values,
             likely_reason=likely_reason,

@@ -10,6 +10,7 @@ from sqlalchemy.exc import SQLAlchemyError
 
 from app.db.models import Prediction
 from app.services.prediction_service import (
+    PredictionCalculationError,
     PredictionValues,
     PredictionPersistenceError,
     WeightedRetentionPredictor,
@@ -196,6 +197,28 @@ class PredictionServiceTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(values)
         self.assertEqual([], evidence["neighbors"])
         self.assertEqual(0, predictor.call_count)
+
+    async def test_predictor_value_error_is_wrapped(self) -> None:
+        predictor = Mock()
+        predictor.predict = AsyncMock(side_effect=ValueError("bad neighbors"))
+        neighbors = [
+            SimilarProfile(
+                employee_id=uuid.uuid4(),
+                similarity=0.9,
+                exit_reason="relocation",
+                tenure_months=12,
+            )
+        ]
+
+        with self.assertRaises(PredictionCalculationError) as raised:
+            await _run_prediction(
+                predictor=predictor,
+                candidate_embedding=[1.0, 0.0],
+                neighbors=neighbors,
+                required_neighbors=1,
+            )
+
+        self.assertIsInstance(raised.exception.__cause__, ValueError)
 
     async def test_completed_prediction_includes_neighbor_and_predictor_evidence(
         self,

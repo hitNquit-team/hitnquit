@@ -1,7 +1,12 @@
 """Add a read-only view for prediction results.
 
+The view is created after all column changes to ``predictions`` and
+``prediction_matches`` so that earlier migrations never have to drop and
+recreate it. Future column additions should use ``CREATE OR REPLACE VIEW``
+and append new columns at the end of the select list.
+
 Revision ID: 8d4f2a6b1c90
-Revises: 7c3e1f4a8b92
+Revises: a1b2c3d4e5f6
 """
 from typing import Sequence, Union
 
@@ -9,7 +14,7 @@ from alembic import op
 
 
 revision: str = "8d4f2a6b1c90"
-down_revision: Union[str, Sequence[str], None] = "7c3e1f4a8b92"
+down_revision: Union[str, Sequence[str], None] = "a1b2c3d4e5f6"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
@@ -17,7 +22,7 @@ depends_on: Union[str, Sequence[str], None] = None
 def upgrade() -> None:
     op.execute(
         """
-        CREATE VIEW prediction_results AS
+        CREATE OR REPLACE VIEW prediction_results AS
         SELECT
             p.id AS prediction_id,
             p.employee_id AS candidate_employee_id,
@@ -25,6 +30,7 @@ def upgrade() -> None:
             p.resume_id,
             p.predicted_tenure,
             p.risk_score,
+            p.confidence,
             p.likely_reason,
             p.evidence,
             p.model_version,
@@ -42,4 +48,4 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    op.execute("DROP VIEW prediction_results")
+    op.execute("DROP VIEW IF EXISTS prediction_results")
