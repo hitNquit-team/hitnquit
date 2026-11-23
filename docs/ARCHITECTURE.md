@@ -170,6 +170,8 @@ erDiagram
 | `POST /api/v1/resumes/upload` | Прийняти резюме та створити AI job | `202 {job_id, employee_id, status}` |
 | `GET /api/v1/employees/{id}` | Отримати профіль і статус | `200 employee DTO` |
 | `POST /api/v1/employees/{id}/feedback` | Додати exit feedback | `201 feedback DTO` |
+| `POST /api/v1/predictions/test-model2` | Виконати Model 2 і атомарно зберегти prediction + prediction matches | `200 prediction DTO` або задокументована помилка |
+| `GET /api/v1/predictions/{prediction_id}?tenant_id={tenant_id}` | Прочитати один незмінний prediction у межах tenant | `200 prediction DTO` або `404` |
 
 Всі endpoint-и мають повертати узгоджений формат помилки:
 

@@ -52,6 +52,10 @@ class Model2PredictionRequest(BaseModel):
         default=None,
         description="Optional employee ID excluded from historical similarity search.",
     )
+    resume_id: uuid.UUID | None = Field(
+        default=None,
+        description="Optional resume ID used only when persisting the prototype prediction.",
+    )
 
     @model_validator(mode="before")
     @classmethod

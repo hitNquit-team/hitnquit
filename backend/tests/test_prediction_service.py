@@ -312,6 +312,7 @@ class PredictionServiceTests(unittest.IsolatedAsyncioTestCase):
         session = Mock()
         session.add = Mock()
         session.add_all = Mock()
+        session.rollback = AsyncMock()
         session.flush = AsyncMock(
             side_effect=SQLAlchemyError("database unavailable")
         )
@@ -330,6 +331,7 @@ class PredictionServiceTests(unittest.IsolatedAsyncioTestCase):
             )
 
         session.commit.assert_not_awaited()
+        session.rollback.assert_awaited_once()
         self.assertIsInstance(
             raised.exception.__cause__,
             SQLAlchemyError,

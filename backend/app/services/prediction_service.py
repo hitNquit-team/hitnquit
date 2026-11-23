@@ -357,6 +357,7 @@ async def _persist_prediction(
         )
         await session.flush()
     except SQLAlchemyError as exc:
+        await session.rollback()
         raise PredictionPersistenceError(
             "failed to persist prediction and prediction matches"
         ) from exc
@@ -371,6 +372,7 @@ async def create_prediction(
     predictor: RetentionPredictor,
     neighbor_limit: int = DEFAULT_NEIGHBOR_LIMIT,
     minimum_neighbors: int | None = DEFAULT_MINIMUM_NEIGHBORS,
+    candidate_embedding: Sequence[float] | None = None,
 ) -> PredictionRunResult:
     """Create one immutable prediction using only the caller's tenant history."""
     required_neighbors = _validate_prediction_request(
@@ -383,17 +385,28 @@ async def create_prediction(
         employee_id=employee_id,
         resume_id=resume_id,
     )
+    resolved_embedding = (
+        resume.embedding
+        if candidate_embedding is None
+        else candidate_embedding
+    )
+    if not resolved_embedding:
+        raise ValueError("candidate_embedding must not be empty")
+    if not any(value != 0 for value in resolved_embedding):
+        raise ValueError("candidate_embedding must not be a zero vector")
+    if len(resolved_embedding) != len(resume.embedding):
+        raise ValueError("candidate_embedding must match the resume embedding dimension")
 
     neighbors = await find_similar_profiles(
         session,
         tenant_id=auth_context.tenant_id,
-        candidate_embedding=resume.embedding,
+        candidate_embedding=resolved_embedding,
         limit=neighbor_limit,
         candidate_employee_id=employee_id,
     )
     status, values, evidence = await _run_prediction(
         predictor=predictor,
-        candidate_embedding=resume.embedding,
+        candidate_embedding=resolved_embedding,
         neighbors=neighbors,
         required_neighbors=required_neighbors,
     )
