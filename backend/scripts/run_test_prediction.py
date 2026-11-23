@@ -8,6 +8,7 @@ import sys
 import uuid
 from pathlib import Path
 from sqlalchemy import select
+from sqlalchemy.engine import make_url
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 
 if __package__ in {None, ""}:
@@ -128,12 +129,7 @@ async def _upsert_demo_data(session: AsyncSession, tenant: Tenant) -> uuid.UUID:
 
 
 async def _run(database_url: str, tenant_name: str) -> None:
-    if "postgresql+asyncpg://" not in database_url:
-        database_url = database_url.replace(
-            "postgresql+psycopg2://",
-            "postgresql+asyncpg://",
-            1,
-        )
+    database_url = make_url(database_url).set(drivername="postgresql+asyncpg")
     engine = create_async_engine(database_url)
     try:
         async with AsyncSession(engine, expire_on_commit=False) as session:

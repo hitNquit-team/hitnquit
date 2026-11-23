@@ -1,7 +1,7 @@
 """Set fixed precision for prediction numeric values.
 
 Revision ID: 9e8a4c2d1f73
-Revises: 8d4f2a6b1c90
+Revises: 7c3e1f4a8b92
 """
 from typing import Sequence, Union
 
@@ -10,7 +10,7 @@ import sqlalchemy as sa
 
 
 revision: str = "9e8a4c2d1f73"
-down_revision: Union[str, Sequence[str], None] = "8d4f2a6b1c90"
+down_revision: Union[str, Sequence[str], None] = "7c3e1f4a8b92"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
